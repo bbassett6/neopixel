@@ -10,14 +10,11 @@ entity NeoPixelController is
 		clk_10M  : in   std_logic;
 		resetn   : in   std_logic;
 		latch    : in   std_logic;
-		data     : in   std_logic_vector(39 downto 0);
---		selection : in  std_logic_vector(9 downto 0);
---		demo1		: in std_logic;
---		demo2		: in std_logic;
---		demo3		: in std_logic;
---		demo4		: in std_logic;
+		data     : in   std_logic_vector(31 downto 0);
+		mode		: in 	 std_logic_vector(9 downto 0);
 --		activate	: in	 std_logic;
-		sda      : out  std_logic
+		sda      : out  std_logic;
+		ledrs		: out  std_logic_vector(9 downto 0)
 		
 	); 
 
@@ -26,14 +23,14 @@ end entity;
 architecture internals of NeoPixelController is
 
 	-- Signal to store the pixel's color data
-	signal led_buffer : std_logic_vector(23 downto 0);
-	signal working_buffer : std_logic_vector(23 downto 0);
+	signal led_buffer			: std_logic_vector(23 downto 0);
+	signal working_buffer 	: std_logic_vector(23 downto 0);
 	type prime_string is array (0 to 255) of std_logic_vector(23 downto 0);
-	signal primestring : prime_string;
+	signal primestring 		: prime_string;
 	
 	type STATE_TYPE is (off, white, all16, one16, all24, one24, fade, cascade, switches);
-	signal state  : STATE_TYPE;
-	signal repeat : std_logic;
+	signal state  	: STATE_TYPE;
+	signal repeat 	: std_logic;
 	signal analyze : std_logic;
 	
 	
@@ -48,7 +45,7 @@ begin
 		constant t0l : integer := 9;
 
 		-- which bit in the 24 bits is being sent
-		variable bit_count   : integer range 0 to 23;
+		variable bit_count   : integer range 0 to 6143;
 		-- which led in the string we are altering
 		variable led_count	: integer range 0 to 255;
 		-- counter to count through the bit encoding
@@ -61,7 +58,7 @@ begin
 		
 		if resetn = '0' then
 			-- reset all counters
-			bit_count := 23;
+			bit_count := 0;
 			led_count := 0;
 			enc_count := 0;
 --			analyze 	 <= '0';
@@ -71,29 +68,29 @@ begin
 --		for index in 0 to 255 loop
 --			working_buffer <= primestring(index);
 --		end loop;
-		elsif (rising_edge(clk_10M)) and analyze = '1' then
---			working_buffer <= primestring(5);
 
+		elsif (rising_edge(clk_10M)) and analyze = '1' then
+
+--			working_buffer <= primestring(led_count);
+			
 			-- This IF block controls the various counters
 			if reset_count > 0 then
 				-- during reset period, ensure other counters are reset
-				bit_count := 23;
+				bit_count := 0;
 				enc_count := 0;
 				-- decrement the reset count
 				reset_count := reset_count - 1;
-				working_buffer <= primestring(led_count);
+				
 				
 			else -- not in reset period (i.e. currently sending data)
 				-- handle reaching end of a bit
-				if working_buffer(bit_count) = '1' then -- current bit is 1
+				if primestring(bit_count/24)(bit_count mod 24) = '1' then -- current bit is 1
 					if enc_count = (t1h+t1l-1) then -- is end of the bit?
 						enc_count := 0;
-						if bit_count = 0 then -- is end of the LED's data?
+						if bit_count = 6143 then -- is end of the LED's data?
 							reset_count := 1000;
-							led_count := led_count + 1;
 						else
-							-- if not end of data, decrement count
-							bit_count := bit_count - 1;
+							bit_count := bit_count + 1;
 						end if;
 					else
 						-- within a bit, count to achieve correct pulse widths
@@ -102,11 +99,11 @@ begin
 				else -- current bit is 0
 					if enc_count = (t0h+t0l-1) then -- is end of the bit?
 						enc_count := 0;
-						if bit_count = 0 then -- is end of the LED's data?
-							reset_count := 1000;
-							led_count := led_count + 1;
+						if bit_count = 6143 then -- is end of the LED's data?
+								reset_count := 1000;
+							-- if not end of data, decrement count
 						else
-							bit_count := bit_count - 1;
+							bit_count := bit_count + 1;
 						end if;
 					else
 						-- within a bit, count to achieve correct pulse widths
@@ -121,9 +118,9 @@ begin
 				sda <= '0';
 			elsif 
 				-- sda is 1 if it's the first part of a bit, which depends on if it's 1 or 0
-				( ((working_buffer(bit_count) = '1') and (enc_count < t1h))
+				( ((primestring(bit_count/24)(bit_count mod 24) = '1') and (enc_count < t1h))
 				or
-				((working_buffer(bit_count) = '0') and (enc_count < t0h)) )
+				((primestring(bit_count/24)(bit_count mod 24) = '0') and (enc_count < t0h)) )
 				then sda <= '1';
 			else
 				sda <= '0';
@@ -141,26 +138,33 @@ begin
 		if resetn = '0' then
 			state <= off;
 			
-			
 		elsif rising_edge(clk_10M) then
 			case state IS
-				when off=>
-					if data(39 downto 32) =    "00000001" then
+				when off =>
+					if mode =    "0000000001" then
 						state <= one24;
-					elsif data(39 downto 32) = "00000010" then
+						
+					elsif mode = "0000000010" then
 						state <= all24;
-					elsif data(39 downto 32) = "00000100" then
+						
+					elsif mode = "0000000100" then
 						state <= one16;
-					elsif data(39 downto 32) = "00001000" then
+						
+					elsif mode = "0000001000" then
 						state <= all16;
-					elsif data(39 downto 32) = "10000000" then
+						
+					elsif mode = "0000010000" then
 						state <= white;
-					elsif data(39 downto 32) = "00100000" then
+						
+					elsif mode = "0000100000" then
 						state <= fade;
-					elsif data(39 downto 32) = "01000000" then
+						
+					elsif mode = "0001000000" then
 						state <= cascade;
-					elsif data(39 downto 32) = "00010000" then
+						
+					elsif mode = "1XXXXXXXXX" then
 						state <= switches;
+						
 					end if;
 				when white =>
 					state <= white;
@@ -183,61 +187,77 @@ begin
 		end if;
 	end process;
 
-	process (state, data, latch)
+	process (state, data)
 	
-		variable selection 	: 	integer range 0 to 255;
 	
 	begin
-		selection := to_integer(unsigned(data(31 downto 24)));
 
-		if rising_edge(latch) then	
-			case state is
-				when off =>
-					led_buffer <= "000011110000000000001111";
-					repeat <= '1';	
-					
-				when white =>
-					led_buffer <= (others => '1');
-					repeat <= '1';
-					
-				when all16 =>
-					led_buffer <= (data(10 downto 5) &"00" & data(15 downto 11) & "000" & data(4 downto 0) & "000");
-					repeat <= '1';
-					
-				when one16 =>
-					led_buffer <= (data(10 downto 5) &"00" & data(15 downto 11) & "000" & data(4 downto 0) & "000");
-					repeat <= '0';
-					
-				when all24 => 
-					led_buffer <= data(23 downto 0);
-					repeat <= '1';
-					
-				when one24 =>
-					led_buffer <= data(23 downto 0);
-					repeat <= '0';
-					
-				when fade =>
-					led_buffer <= (others => '1');
-					repeat <= '1';
-					
-				when cascade =>
-					led_buffer <= (others => '1');
-					repeat <= '1';
-					
-				when switches =>
-					led_buffer <= (others => '1');
-					repeat <= '1';
-					
-			end case;
-			
-			
+		case state is
+			when off =>
+				led_buffer <= (others => '0');
+				repeat <= '1';
+				ledrs <= "0000000000";	
+				
+			when white =>
+				led_buffer <= (others => '1');
+				repeat <= '1';
+				ledrs <= "0000010000";
+				
+			when all16 =>
+				led_buffer <= (data(23 downto 18) &"00" & data(17 downto 13) & "000" & data(12 downto 8) & "000");
+				repeat <= '1';
+				ledrs <= "0000001000";
+				
+			when one16 =>
+				led_buffer <= (data(23 downto 18) &"00" & data(17 downto 13) & "000" & data(12 downto 8) & "000");
+				repeat <= '0';
+				ledrs <= "0000000100";
+				
+			when all24 => 
+				led_buffer <= data(23 downto 0);
+				repeat <= '1';
+				ledrs <= "0000000010";
+				
+			when one24 =>
+				led_buffer <= data(23 downto 0);
+				repeat <= '0';
+				ledrs <= "0000000001";
+				
+			when fade =>
+				led_buffer <= (others => '1');
+				repeat <= '1';
+				ledrs <= "0000100000";
+				
+			when cascade =>
+				led_buffer <= (others => '1');
+				repeat <= '1';
+				ledrs <= "0001000000";
+				
+			when switches =>
+				led_buffer <= (data(23 downto 21) &"00000" & data(20 downto 18) & "00000" & data(17 downto 5) & "00000");
+				repeat <= '1';
+				ledrs <= "1000000000";
+				
+		end case;
+	end process;
+	
+	
+	process(led_buffer, latch)
+		
+		variable selection 	: 	integer range 0 to 255;
+
+	begin
+	
+		selection := to_integer(unsigned(data(31 downto 24)));
+		
+		if rising_edge(latch) then		
 			if repeat = '0' then
 				primestring(selection) <= led_buffer;
 				analyze <= '1';
 				
 			elsif repeat = '1' then
 				for led in 0 to 255 loop
-					primestring(led) <= "000011110000000000001111";
+					primestring(led) <= led_buffer;
 				end loop;
 				analyze <= '1';
 				
@@ -253,93 +273,3 @@ end internals;
 		-- make an if else-if chain for all the different modes based on the meta index. ie. if meta = "0000010" then do this mode
 		-- meta is  -- data(39 downto 32) -- 
 		
-	
---architecture mode of NeoPixelController is
---	type STATE_TYPE is (off, white, all16, one16, all24, one24, fade, cascade, switches);
---	signal state  : STATE_TYPE;
---	signal repeat : std_logic := '0';
---	
---	
---begin
---	process (clk_10M, resetn, latch, data)
---
---	begin
---		if rising_edge(latch) then
---		
---			if resetn = '0' then
---				state <= off;
---			elsif rising_edge(clk_10M) then
---				case state IS
---					when off=>
---						if data(39 downto 32) =    "00000001" then
---							state <= one24;
---						elsif data(39 downto 32) = "00000010" then
---							state <= all24;
---						elsif data(39 downto 32) = "00000100" then
---							state <= one16;
---						elsif data(39 downto 32) = "00001000" then
---							state <= all16;
---						elsif data(39 downto 32) = "00010000" then
---							state <= white;
---						elsif data(39 downto 32) = "00100000" then
---							state <= fade;
---						elsif data(39 downto 32) = "01000000" then
---							state <= cascade;
---						elsif data(39 downto 32) = "10000000" then
---							state <= switches;
---						end if;
---					
---				end case;
---			end if;
---		end if;
---	end process;
---
---	process (state, data, latch)
---	
---	variable selection 	: 	integer range 0 to 255;
---	
---	begin
---		selection := to_integer(unsigned(data(24 to 31)));
---
---		case state is
---			when off =>
---				led_buffer <= (others => '0');
---				repeat <= '1';	
---				
---			when white =>
---				led_buffer <= (others => '1');
---				repeat <= '1';
---				
---			when all16 =>
---				led_buffer <= (data(10 downto 5) &"00" & data(15 downto 11) & "000" & data(4 downto 0) & "000");
---				repeat <= '1';
---				
---			when one16 =>
---				led_buffer <= (data(10 downto 5) &"00" & data(15 downto 11) & "000" & data(4 downto 0) & "000");
---				
---			when all24 => 
---				led_buffer <= data(23 downto 0);
---				repeat <= '1';
---				
---			when one24 =>
---				led_buffer <= data(23 downto 0);
---				
-----			when fade
-----			when cascade
-----			when switches
---
---		end case;
---		
---		if repeat = '0' then
---			primestring(selection) <= led_buffer;
---			
---		elsif repeat = '1' then
---			for led in 0 to 255 loop
---				primestring(led) <= led_buffer;
---			end loop;
---			
---		end if;
---		
---	end process;
---
---end architecture mode;
