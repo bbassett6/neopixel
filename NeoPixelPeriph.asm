@@ -52,7 +52,7 @@ Main:
 	; jzero Cascade
 	
 	in Switches
-	shift -8
+	shift -10
 	jzero switchcontrol
 	
 	 
@@ -125,9 +125,8 @@ switchcontrol:
 	load index
 	out SHIFT_EN
 	
-	in Switches
-	and top3
-	shift -6
+	out SHIFTOUT_EN
+	out NeoPixel
 	
 	
 	
