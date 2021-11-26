@@ -9,12 +9,13 @@ entity NeoPixelController is
 	port(
 		clk_10M  : in   std_logic;
 		resetn   : in   std_logic;
-		latch    : in   std_logic;
-		data     : in   std_logic_vector(31 downto 0);
-		mode		: in 	 std_logic_vector(9 downto 0);
---		activate	: in	 std_logic;
+		latch    : in   std_logic;								--NeoPixel_en
+		data     : in   std_logic_vector(15 downto 0); 	--IO data
+		mode		: in 	 std_logic_vector(9 downto 0);	--switches[9..0]
 		sda      : out  std_logic;
-		ledrs		: out  std_logic_vector(9 downto 0)
+		ledrs		: out  std_logic_vector(9 downto 0);	--DE10-lite leds
+		shift_en    : in   std_logic;							--shift register enable
+		shiftout_en : in	 std_logic							--storage register enable
 		
 	); 
 
@@ -31,11 +32,44 @@ architecture internals of NeoPixelController is
 	type STATE_TYPE is (off, white, all16, one16, all24, one24, fade, cascade, switches);
 	signal state  	: STATE_TYPE;
 	signal repeat 	: std_logic;
-	signal analyze : std_logic;
-	
-	
-		
+	signal analyze : std_logic; 
+	signal storage 		: std_logic_vector(31 downto 0);
+	signal storage_out	:	 std_logic_vector(31 downto 0);		
+	--storage_out is the register you should read from if you need to get data from the shift register
+	--the shift register can also be modified to be larger for dynamic effects
+	--we can also add another shift register. there are really no limits, it just has to have its own enables and processes
+ 
 begin
+ 
+--shift register for culminating the 3 color values from scomp
+--first values are added to shift register with shift_en
+ 
+	process(shift_en, mode)
+	begin
+		if rising_edge(shift_en) then
+		
+			storage <= storage(storage'high- 8 downto storage'low) & data(7 downto 0);
+
+-- I am going to try to make two seperate shift registers for 24 bit and 16 bit color	
+		--elsif rising_edge(shift_en) and mode(9 downto 8) = "01" then
+			
+			--storage <= storage(storage'high- 8 downto storage'low) & data(7 downto 0);
+
+		end if;
+	end process;
+ 
+--then values are added to storage register with shiftout_en
+ 
+	process(shiftout_en)
+	begin
+		if rising_edge(shiftout_en) then
+			storage_out <= storage;
+		end if;
+	end process;
+  
+  
+  
+  
 				
 	process (clk_10M, resetn)
 		-- protocol timing values (in 100s of ns)
@@ -61,17 +95,12 @@ begin
 			bit_count := 0;
 			led_count := 0;
 			enc_count := 0;
---			analyze 	 <= '0';
 			reset_count := 1000;
 			-- set sda inactive
 			sda <= '0';
---		for index in 0 to 255 loop
---			working_buffer <= primestring(index);
---		end loop;
 
 		elsif (rising_edge(clk_10M)) and analyze = '1' then
 
---			working_buffer <= primestring(led_count);
 			
 			-- This IF block controls the various counters
 			if reset_count > 0 then
@@ -129,40 +158,42 @@ begin
 		end if;
 	end process;
 	
+	
+	
 --	state machine to determine the demo mode to be in --
 	
-	process (clk_10M, resetn, latch, data)
+	process (clk_10M, resetn, latch, storage_out)
 
 	begin
 		
-		if resetn = '0' then
+		if resetn = '0' then		--all states stay until you reset. to change state: lower switches, key 0, raise desired switch
 			state <= off;
 			
 		elsif rising_edge(clk_10M) then
 			case state IS
 				when off =>
-					if mode =    "0000000001" then
+					if mode =    "0000000001" then  	--switch 0 is one pixel at 24 bit color
 						state <= one24;
 						
-					elsif mode = "0000000010" then
+					elsif mode = "0000000010" then	--switch 1 is all pixels at 24 bit color
 						state <= all24;
 						
-					elsif mode = "0000000100" then
+					elsif mode = "0000000100" then	--switch 2 is one pixel at 16 bit color
 						state <= one16;
 						
-					elsif mode = "0000001000" then
+					elsif mode = "0000001000" then	--switch 3 is all pixels at 16 bit color
 						state <= all16;
 						
-					elsif mode = "0000010000" then
+					elsif mode = "0000010000" then	--switch 4 is all full brightness white
 						state <= white;
 						
-					elsif mode = "0000100000" then
+					elsif mode = "0000100000" then	--switch 5 is not functional but will be a rainbow fade effect
 						state <= fade;
 						
-					elsif mode = "0001000000" then
+					elsif mode = "0001000000" then	--switch 6 is not functional but will be a single led "looping" around
 						state <= cascade;
 						
-					elsif mode = "1XXXXXXXXX" then
+					elsif mode(9) = '1' then			--switch 9 allows you to control the color of the strip with 3-3-3 bit depth using sw(8 downto 0)
 						state <= switches;
 						
 					end if;
@@ -187,8 +218,11 @@ begin
 		end if;
 	end process;
 
-	process (state, data)
 	
+-- here we define led_buffer and whether or not we are going to define the whole string,
+--	and we set the leds on the board to reflect the state we are in
+	
+	process (state, storage_out, mode)
 	
 	begin
 
@@ -203,23 +237,26 @@ begin
 				repeat <= '1';
 				ledrs <= "0000010000";
 				
+				
+		-- these need tuning
 			when all16 =>
-				led_buffer <= (data(23 downto 18) &"00" & data(17 downto 13) & "000" & data(12 downto 8) & "000");
+				led_buffer <= (storage_out(23 downto 18) &"00" & storage_out(17 downto 13) & "000" & storage_out(12 downto 8) & "000");
 				repeat <= '1';
 				ledrs <= "0000001000";
 				
 			when one16 =>
-				led_buffer <= (data(23 downto 18) &"00" & data(17 downto 13) & "000" & data(12 downto 8) & "000");
+				led_buffer <= (storage_out(23 downto 18) &"00" & storage_out(17 downto 13) & "000" & storage_out(12 downto 8) & "000");
 				repeat <= '0';
 				ledrs <= "0000000100";
-				
+		-- ^^^^^^^
+		
 			when all24 => 
-				led_buffer <= data(23 downto 0);
+				led_buffer <= storage_out(23 downto 0);
 				repeat <= '1';
 				ledrs <= "0000000010";
 				
 			when one24 =>
-				led_buffer <= data(23 downto 0);
+				led_buffer <= storage_out(23 downto 0);
 				repeat <= '0';
 				ledrs <= "0000000001";
 				
@@ -234,7 +271,7 @@ begin
 				ledrs <= "0001000000";
 				
 			when switches =>
-				led_buffer <= (data(23 downto 21) &"00000" & data(20 downto 18) & "00000" & data(17 downto 5) & "00000");
+				led_buffer <= (mode(2 downto 0) &"00000" & mode(5 downto 3) & "00000" & mode(8 downto 6) & "00000");
 				repeat <= '1';
 				ledrs <= "1000000000";
 				
@@ -248,13 +285,16 @@ begin
 
 	begin
 	
-		selection := to_integer(unsigned(data(31 downto 24)));
+		selection := to_integer(unsigned(storage_out(31 downto 24)));
 		
 		if rising_edge(latch) then		
-			if repeat = '0' then
+		
+			-- if repeat is 0 it means we only want to change an individual led at a certain index
+			if repeat = '0' then		
 				primestring(selection) <= led_buffer;
 				analyze <= '1';
 				
+			-- if repeat is 1, we want to write to the whole string
 			elsif repeat = '1' then
 				for led in 0 to 255 loop
 					primestring(led) <= led_buffer;
@@ -268,8 +308,4 @@ begin
 	end process;
 	
 end internals;
-		
-		
-		-- make an if else-if chain for all the different modes based on the meta index. ie. if meta = "0000010" then do this mode
-		-- meta is  -- data(39 downto 32) -- 
 		
