@@ -109,7 +109,7 @@ begin
 		
 		if resetn = '0' then
 			-- reset all counters
-			bit_count := 0;
+			bit_count := 6143;
 			enc_count := 0;
 			reset_count := 1000;
 			-- set sda inactive
@@ -121,7 +121,7 @@ begin
 			-- This IF block controls the various counters
 			if reset_count > 0 then
 				-- during reset period, ensure other counters are reset
-				bit_count := 0;
+				bit_count := 6143;
 				enc_count := 0;
 				-- decrement the reset count
 				reset_count := reset_count - 1;
@@ -132,10 +132,10 @@ begin
 				if primestring(bit_count/24)(bit_count mod 24) = '1' then -- current bit is 1
 					if enc_count = (t1h+t1l-1) then -- is end of the bit?
 						enc_count := 0;
-						if bit_count = 6143 then -- is end of the LED's data?
+						if bit_count = 0 then -- is end of the LED's data?
 							reset_count := 1000;
 						else
-							bit_count := bit_count + 1;
+							bit_count := bit_count - 1;
 						end if;
 					else
 						-- within a bit, count to achieve correct pulse widths
@@ -144,11 +144,11 @@ begin
 				else -- current bit is 0
 					if enc_count = (t0h+t0l-1) then -- is end of the bit?
 						enc_count := 0;
-						if bit_count = 6143 then -- is end of the LED's data?
+						if bit_count = 0 then -- is end of the LED's data?
 								reset_count := 1000;
 							-- if not end of data, decrement count
 						else
-							bit_count := bit_count + 1;
+							bit_count := bit_count - 1;
 						end if;
 					else
 						-- within a bit, count to achieve correct pulse widths
@@ -287,7 +287,7 @@ begin
 				ledrs <= "0001000000";
 				
 			when switches =>
-				led_buffer <= (mode(2 downto 0) &"00000" & mode(5 downto 3) & "00000" & mode(8 downto 6) & "00000");
+				led_buffer <= (mode(8 downto 6) &"00000" & mode(5 downto 3) & "00000" & mode(2 downto 0) & "00000");
 				repeat <= '1';
 				ledrs <= "1000000000";
 				
@@ -307,7 +307,7 @@ begin
 		
 			-- if repeat is 0 it means we only want to change an individual led at a certain index
 			if repeat = '0' then		
-				primestring(selection) <= led_buffer;
+				primestring(6143 - selection) <= led_buffer;
 				analyze <= '1';
 				
 			-- if repeat is 1, we want to write to the whole string
