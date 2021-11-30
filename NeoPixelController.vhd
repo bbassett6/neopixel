@@ -8,6 +8,7 @@ entity NeoPixelController is
 
 	port(
 		clk_10M  : in   std_logic;
+		clk_10	: in	 std_logic;
 		resetn   : in   std_logic;
 		latch    : in   std_logic;								--NeoPixel_en
 		data     : in   std_logic_vector(15 downto 0); 	--IO data
@@ -15,7 +16,8 @@ entity NeoPixelController is
 		sda      : out  std_logic;
 		ledrs		: out  std_logic_vector(9 downto 0);	--DE10-lite leds
 		shift_en    : in   std_logic;							--shift register enable
-		shiftout_en : in	 std_logic							--storage register enable
+		shiftout_en : in	 std_logic;							--storage register enable
+		sixteen_en	: in std_logic								--sixteen bit color enable
 		
 	); 
 
@@ -33,8 +35,9 @@ architecture internals of NeoPixelController is
 	signal state  	: STATE_TYPE;
 	signal repeat 	: std_logic;
 	signal analyze : std_logic; 
-	signal storage 		: std_logic_vector(31 downto 0);
-	signal storage_out	:	 std_logic_vector(31 downto 0);		
+	signal storage 		: 	std_logic_vector(31 downto 0);
+	signal storage_out	:	std_logic_vector(31 downto 0);
+	signal colordepth		:	std_logic;
 	--storage_out is the register you should read from if you need to get data from the shift register
 	--the shift register can also be modified to be larger for dynamic effects
 	--we can also add another shift register. there are really no limits, it just has to have its own enables and processes
@@ -44,18 +47,34 @@ begin
 --shift register for culminating the 3 color values from scomp
 --first values are added to shift register with shift_en
  
-	process(shift_en, mode)
+	process(shift_en, sixteen_en, resetn)
+
 	begin
+		if resetn = '0' then
+			colordepth <= '0';
+		elsif rising_edge(sixteen_en) then
+			colordepth <= '1';
+		
+		end if;
+		
 		if rising_edge(shift_en) then
 		
-			storage <= storage(storage'high- 8 downto storage'low) & data(7 downto 0);
-
--- I am going to try to make two seperate shift registers for 24 bit and 16 bit color	
-		--elsif rising_edge(shift_en) and mode(9 downto 8) = "01" then
+			if colordepth = '0' then
 			
-			--storage <= storage(storage'high- 8 downto storage'low) & data(7 downto 0);
-
+				storage <= storage(storage'high- 8 downto storage'low) & data(7 downto 0);
+				
+			elsif colordepth = '1' then
+			
+				storage <= storage(storage'high -24 downto storage'low) & data(15 downto 0) & "00000000";
+				
+			end if;
+--		elsif rising_edge(sixteen_en) then
+--		
+--			storage <= storage(storage'high -16 downto storage'low) & data(15 downto 0);
+--			--storage <= storage(storage'high -8	downto storage'low) & "00000000";
+--			
 		end if;
+		
 	end process;
  
 --then values are added to storage register with shiftout_en
@@ -71,7 +90,7 @@ begin
   
   
 				
-	process (clk_10M, resetn)
+	process (clk_10M, resetn, analyze)
 		-- protocol timing values (in 100s of ns)
 		constant t1h : integer := 8;
 		constant t1l : integer := 4;
@@ -80,8 +99,6 @@ begin
 
 		-- which bit in the 24 bits is being sent
 		variable bit_count   : integer range 0 to 6143;
-		-- which led in the string we are altering
-		variable led_count	: integer range 0 to 255;
 		-- counter to count through the bit encoding
 		variable enc_count   : integer range 0 to 31;
 		-- counter for the reset pulse
@@ -93,7 +110,6 @@ begin
 		if resetn = '0' then
 			-- reset all counters
 			bit_count := 0;
-			led_count := 0;
 			enc_count := 0;
 			reset_count := 1000;
 			-- set sda inactive
@@ -222,7 +238,7 @@ begin
 -- here we define led_buffer and whether or not we are going to define the whole string,
 --	and we set the leds on the board to reflect the state we are in
 	
-	process (state, storage_out, mode)
+	process (state, storage_out, mode, sixteen_en, data)
 	
 	begin
 
@@ -240,12 +256,12 @@ begin
 				
 		-- these need tuning
 			when all16 =>
-				led_buffer <= (storage_out(23 downto 18) &"00" & storage_out(17 downto 13) & "000" & storage_out(12 downto 8) & "000");
+				led_buffer <= (storage_out(10 downto 5) &"00" & storage_out(15 downto 11) & "000" & storage_out(4 downto 0) & "000");
 				repeat <= '1';
 				ledrs <= "0000001000";
 				
 			when one16 =>
-				led_buffer <= (storage_out(23 downto 18) &"00" & storage_out(17 downto 13) & "000" & storage_out(12 downto 8) & "000");
+				led_buffer <= (storage_out(10 downto 5) &"00" & storage_out(15 downto 11) & "000" & storage_out(4 downto 0) & "000");
 				repeat <= '0';
 				ledrs <= "0000000100";
 		-- ^^^^^^^
@@ -279,7 +295,7 @@ begin
 	end process;
 	
 	
-	process(led_buffer, latch)
+	process(led_buffer, latch, storage_out)
 		
 		variable selection 	: 	integer range 0 to 255;
 
